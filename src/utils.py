@@ -98,7 +98,7 @@ def get_artists_info(input_csv_path: str, output_csv_path: str, output_wikitext_
             # print(ind, row['artist_name'], )
             artist_page_url = os.path.join('https://www.wikiart.org', row['artist_link'][1:])
             artist_info_page = request_retries(artist_page_url)
-            artist_dict = {'request_result_success': False}
+            artist_dict = {'ind': ind, 'request_result_success': False}
             wiki_text = ''
             if artist_info_page is not None:
                 artist_info_scraper = BeautifulSoup(markup=artist_info_page.content, features="html.parser")
@@ -145,18 +145,24 @@ def get_artwork_by_url(url) -> str:
     res = artwork_block.find('img')['src']
     return res
 
-def get_artworks_links(artwork_links_collector: BeautifulSoup):
+def get_artworks_links(artwork_links_collector: BeautifulSoup, limit: int = 10):
     BASE_URL = "https://www.wikiart.org"
     img_link_set = artwork_links_collector.find(name='ul', class_='painting-list-text')
     # img_set = artist_works_scraper.find(name='div', class_='wiki-masonry-container ng-isolate-scope')
-    img_iter = img_link_set.find_all(name='li')
     artworks_array = []
+    if img_link_set is None:
+        return artworks_array
+    img_iter = img_link_set.find_all(name='li')
     exception_occured = False
+    artwork_cnt = 0
     for i in img_iter:
+        if artwork_cnt > limit:
+            break
         try:
             link = i.find('a')['href']
             artwork_url = os.path.join(BASE_URL, link[1:])
             artworks_array.append(get_artwork_by_url(artwork_url))
+            artwork_cnt += 1
         except Exception as e:
             if not exception_occured:
                 logger.error('%s', e)
@@ -180,9 +186,12 @@ def get_photo_urls(input_csv_path, output_csv_path):
         cnt = 0
         batch_num = 0
         for ind, row in pd.read_csv(input_csv_path).iterrows():
+            cnt += 1
             if ind in collected_ids:
                 logger.info('%d: %s already collected', ind, row['artist_link'])
                 continue
+            else:
+                logger.info('scraping %d: %s...', ind, row['artist_link'])
             artist_page_url = os.path.join('https://www.wikiart.org', row['artist_link'][1:])
             result_url = os.path.join(artist_page_url, page_postfix)
             artist_work_links_web_page = request_retries(result_url)
@@ -195,7 +204,6 @@ def get_photo_urls(input_csv_path, output_csv_path):
                 logger.error('Empty artwork list for %s', result_url)
             artworks_json = json.dumps(artworks_links)
             artworks.append((ind, row['artist_name'], result_url, artworks_json))
-            cnt += 1
             if cnt % batch_size == 0:
                 batch_file_name = output_csv_path.replace('/data/', '/data/data_batches/').replace('.csv', f'_{batch_num * batch_size}_{batch_num * batch_size + batch_size}.csv')
                 batch_num += 1
