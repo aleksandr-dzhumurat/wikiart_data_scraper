@@ -14,12 +14,11 @@ build-jupyter:
 run: build-network
 	docker run -it --rm \
 	    --env-file ${CURRENT_DIR}/.env \
-	    -p ${PORT}:8888 \
 	    -v "${CURRENT_DIR}/src:/srv/src" \
 	    -v "${CURRENT_DIR}/data:/srv/data" \
 		--network service_network \
 	    --name ${PROJECT_NAME}_container \
-	    ${PROJECT_NAME}:dev scrape
+	    ${PROJECT_NAME}:dev ${PIPELINE}
 
 jupyter: build-network
 	docker run -d --rm \
