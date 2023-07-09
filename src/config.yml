@@ -1,0 +1,6 @@
+root_data_dir: /srv/data
+data_version: '03'
+galleries_pages:
+  - https://www.galleriesnow.net/exhibitions/london
+  - https://www.galleriesnow.net/exhibitions/berlin
+  - https://www.galleriesnow.net/exhibitions/paris

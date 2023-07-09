@@ -2,3 +2,4 @@ requests
 jupyter
 pandas
 bs4
+PyYAML
