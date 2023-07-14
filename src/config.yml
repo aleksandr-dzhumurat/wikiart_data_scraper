@@ -4,3 +4,4 @@ galleries_pages:
   - https://www.galleriesnow.net/exhibitions/london
   - https://www.galleriesnow.net/exhibitions/berlin
   - https://www.galleriesnow.net/exhibitions/paris
+service_data_dir_name: 'service_data' 

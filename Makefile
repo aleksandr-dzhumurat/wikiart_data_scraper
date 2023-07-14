@@ -1,6 +1,6 @@
 CURRENT_DIR = $(shell pwd)
 PROJECT_NAME = artinder
-PORT_JUPYTER = 8888
+PORT_JUPYTER = 8889
 
 build-network:
 	docker network create service_network -d bridge || true
@@ -17,7 +17,6 @@ run: build-network
 	    -v "${CURRENT_DIR}/src:/srv/src" \
 	    -v "${CURRENT_DIR}/data:/srv/data" \
 		--network service_network \
-	    --name ${PROJECT_NAME}_container \
 	    ${PROJECT_NAME}:dev ${PIPELINE}
 
 jupyter: build-network

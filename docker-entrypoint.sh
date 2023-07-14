@@ -7,8 +7,8 @@ case "$1" in
   wikidata)
     python3 src/main.py --pipeline wikidata
     ;;
-  galleriesnow)
-    python3 src/main.py --pipeline galleriesnow
+  galleries)
+    python3 src/main.py --pipeline galleries
     ;;
   *)
     exec "$@"
