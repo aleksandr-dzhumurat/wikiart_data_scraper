@@ -3,3 +3,4 @@ jupyter
 pandas
 pymongo
 matplotlib
+nltk==3.6.2

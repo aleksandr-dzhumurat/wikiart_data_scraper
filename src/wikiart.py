@@ -4,10 +4,11 @@ import requests
 import re
 from typing import Optional, List, Dict
 
+import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 
-from utils import request_retries, logger
+from utils import request_retries, logger, init_nltk
 
 
 def prepare_pages_list() -> List[str]:
@@ -26,7 +27,7 @@ def get_artists_pages(result_csv_path: str):
     logger.info(result_csv_path)
     
     if not os.path.exists(result_csv_path):
-        res = pd.DataFrame([], columns=['artist_name', 'artist_link'])
+        res_df = pd.DataFrame([], columns=['artist_name', 'artist_link'])
         for current_alphabet_page in page_list:
             artists_scraper = BeautifulSoup(
                 markup=requests.get(current_alphabet_page).content, features="html.parser"
@@ -171,20 +172,39 @@ def save_batch(batch_data: List, final_csv_path: str, batches_dir_name: str, bat
         .to_csv(batch_file_name, index=False)
     )
 
-def collect_batches(batches_dir_name):
+def collect_batches(batches_dir_name: str,  overwrite: bool = False):
+    logger.info('Collecting batches from %s', batches_dir_name)
     res = pd.DataFrame([], columns=['ind', 'artist_name', 'artworks_url', 'artworks'])
     try: 
         batch_files = os.listdir(batches_dir_name)
         # batches from previous runs
         for batch_file in batch_files:
             res = pd.concat([res, pd.read_csv(os.path.join(batches_dir_name, batch_file))])
+        if res.shape[0] > 0 and overwrite:
+            for batch_file in batch_files:
+                logger.info('removing %s', batch_file)
+                os.remove(os.path.join(batches_dir_name, batch_file))
+            min_id, max_id = batches_df['ind'].min(), batches_df['ind'].max()
     except FileNotFoundError:
         os.makedirs(batches_dir_name)
     return res
 
+def vacuum_batches(batches_dir_name):
+    logger.info('re')
+
 def get_photo_urls(input_csv_path, output_csv_path, batches_dir_name, batch_size: int = 30):
     page_postfix = 'all-works/text-list'
     batches_df = collect_batches(batches_dir_name)
+    if batches_df.shape[0] > 0:
+        logger.info('Removing files...')
+        min_id, max_id = batches_df['ind'].min(), batches_df['ind'].max()
+        result_f_name = output_csv_path.replace('.csv', f'_{min_id}_{max_id}.csv').split('/')[-1]
+        batch_files = os.listdir(batches_dir_name)
+        for batch_file in batch_files:
+            logger.info('removing %s', batch_file)
+            os.remove(os.path.join(batches_dir_name, batch_file))
+        logger.info('Saving to %s', os.path.join(batches_dir_name, result_f_name))
+        batches_df.sort_values(by='ind').to_csv(os.path.join(batches_dir_name, result_f_name), index=False)
     collected_ids = [int(i) for i in batches_df['ind'].values]
     logger.info('Artwork url retrieval started. Num already collected artists: %d', len(collected_ids))
     if not os.path.exists(output_csv_path):
@@ -194,6 +214,8 @@ def get_photo_urls(input_csv_path, output_csv_path, batches_dir_name, batch_size
         for ind, row in pd.read_csv(input_csv_path).iterrows():
             cnt += 1
             if ind in collected_ids:
+                if cnt % batch_size == 0:
+                    batch_num += 1
                 continue  # skip all collected ids
             logger.info('scraping %d: %s...', ind, row['artist_link'])
             result_url = os.path.join(os.path.join('https://www.wikiart.org', row['artist_link'][1:]), page_postfix)
@@ -205,4 +227,85 @@ def get_photo_urls(input_csv_path, output_csv_path, batches_dir_name, batch_size
                 batch_num += 1
                 logger.info('Num processed links %d', cnt)
                 artworks = []
+        final_df = collect_batches(batches_dir_name)
+        logger.info('Total num rows %d', final_df.shape[0])
+        final_df.sort_values(by='ind').to_csv(output_csv_path, index=False)
     logger.info('Artworks data saved')
+
+
+def process_field(raw_str):
+    if not isinstance(raw_str, str):
+        return ''
+    try:
+        res = ' '.join(sorted(set([
+            i.strip().replace(',', '')
+            for i in raw_str.split(' ')
+            if len(i.strip().replace(',', '')) > 0]))
+        )
+    except Exception as e:
+        print(raw_str)
+        raise e
+    return res
+
+def process_art_movement(raw_str):
+    if not isinstance(raw_str, str):
+        return ''
+    try:
+        res = ' '.join(sorted(set([i.strip() for i in raw_str.split(',')])))
+        res = ' '.join(sorted(set(res.split(' '))))
+    except Exception as e:
+        print(raw_str)
+        raise e
+    return res
+
+def compute_tags(input_content_df) -> pd.DataFrame:
+    from nltk.corpus import stopwords
+
+    stop_words = set(stopwords.words('english')) 
+    flat_list = list(
+        np.concatenate(
+            input_content_df['artist_movement']
+            .apply(lambda x: [i.replace('(', '').replace(')', '').lower() for i in x.split(' ') if len(i)>0])
+            .values
+        ).flat
+    )
+    flat_list = [i for i in flat_list if i not in stop_words]
+
+    tags_df = (
+        pd.DataFrame(flat_list, columns=['tag'])
+        .value_counts()
+        .to_frame(name='cnt')
+        .query('cnt>1').reset_index()
+    )
+    tags_df.drop(tags_df[~tags_df['tag'].apply(lambda x: any(c.isalpha() for c in x))].index, inplace=True)
+    tags_df.reset_index(inplace=True, drop=True)
+
+    return tags_df
+
+def merge_data(input_csv_path: str, input_artists_info_csv_path: str, output_csv_path: str, output_tags_csv_path: str):
+    init_nltk()
+    res_df = pd.read_csv(input_csv_path)
+    if 'ind' in res_df.columns:
+        assert (res_df['ind'].values.size == res_df['ind'].unique().size)
+        res_df.set_index('ind', inplace=True)
+    res_df.index.name = None
+    #
+    artists_info_df = pd.read_csv(input_artists_info_csv_path)
+    #
+    content_df = pd.merge(
+        artists_info_df[['artist_name', 'art movement', 'nationality', 'field', 'artist_pic', 'wikipedia', 'artist_url']],
+        res_df,
+        left_index=True, right_index=True, suffixes=('', '_check')
+    )
+    #
+    content_df['artist_field'] = content_df['field'].apply(process_field)
+    content_df['artist_movement'] = content_df['art movement'].apply(process_art_movement)
+    logger.info('Num rows %d', content_df.shape[0])
+    content_df.to_csv(output_csv_path, index=False)
+    #
+    tags_df = compute_tags(content_df)
+    logger.info('Num tags %d', tags_df.shape[0])
+    tags_df.to_csv(output_tags_csv_path, index=False)
+
+def prepare_service_data(service_data_path: str):
+    pass

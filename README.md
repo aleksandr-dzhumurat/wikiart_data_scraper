@@ -1,19 +1,24 @@
 # wikiart_data_scraper
-Scraper for wikiart.org
+
+Scrape wikiart.org. Get artists + content
+
+Run craper for wikiart.org
 
 ```shell
 PIPELINE=wikidata make run
 ```
-
-# Scrape wikiart.org
-
-get artists + content
 
 # Scrape galleries
 
 Find a link to a city
 
 ![galleries_list](assets/galleries_list.png)
+
+Update YML config with selected links then run collector
+
+```shell
+PIPELINE=galleries make run
+```
 
 # Work in progress
 
