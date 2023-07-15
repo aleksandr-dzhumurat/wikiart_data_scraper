@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 
-from utils import request_retries, logger, init_nltk
+from utils import request_retries, logger, init_nltk, n_gram_split
 
 
 def prepare_pages_list() -> List[str]:
@@ -258,27 +258,79 @@ def process_art_movement(raw_str):
         raise e
     return res
 
-def compute_tags(input_content_df) -> pd.DataFrame:
+def greedy_tag_split(raw_tag_description: str, tags_df: pd.DataFrame) -> str:
+    """greedy_tag_split('post-impressionism socialist realism')"""
+    input_str = raw_tag_description
+    res = (
+        pd.DataFrame(n_gram_split(input_str), columns=['tag'])
+        .merge(tags_df[~tags_df['tag'].isin([input_str])], how='inner', on='tag')
+        .sort_values(by='size', ascending=False)  # sort values for greedy matching algorithms
+        ['tag']
+        .values
+    )
+    res_tags = []
+    for i in res:
+        if i in input_str and len(i) < 20: # 27
+            res_tags.append(i)
+            input_str = input_str.replace(i, '')
+        if ' '.join(res_tags) == input_str:
+            break
+    if len(res_tags) == 0:
+        res_tags.append(input_str)
+    return ','.join([' '.join(set(j.split(' '))) for j in res_tags])
+
+def compute_tags(artists_df) -> pd.DataFrame:
+    from itertools import chain
     from nltk.corpus import stopwords
 
-    stop_words = set(stopwords.words('english')) 
-    flat_list = list(
-        np.concatenate(
-            input_content_df['artist_movement']
-            .apply(lambda x: [i.replace('(', '').replace(')', '').lower() for i in x.split(' ') if len(i)>0])
-            .values
-        ).flat
-    )
-    flat_list = [i for i in flat_list if i not in stop_words]
+    def process_art_movement(raw_str: str):
+        return [i.strip() for i in raw_str.split(',') if len(i.strip().lower()) > 0]
+
+
+    artists_df['art movement'] = artists_df['art movement'].fillna('').apply(lambda x: x.lower())
+
+    artists_df['art_movement_raw_tags'] = artists_df['art movement'].apply(process_art_movement)
+
+    flatten_genres = list(chain.from_iterable(artists_df['art_movement_raw_tags'].values))
 
     tags_df = (
-        pd.DataFrame(flat_list, columns=['tag'])
+        pd.DataFrame(flatten_genres,columns=['tag'])['tag']
         .value_counts()
-        .to_frame(name='cnt')
-        .query('cnt>1').reset_index()
+        .reset_index(name='cnt')
     )
-    tags_df.drop(tags_df[~tags_df['tag'].apply(lambda x: any(c.isalpha() for c in x))].index, inplace=True)
-    tags_df.reset_index(inplace=True, drop=True)
+    # tags_df.rename(columns={'index': 'tag'}, inplace=True)
+    print(tags_df.head())
+    # some useful features
+    tags_df['is_complex'] = tags_df['tag'].apply(lambda x: len(x.split(' ')) > 1)
+    tags_df['size'] = tags_df['tag'].apply(lambda x: len(x))
+
+    tags_df['splitted_tags'] =  tags_df['tag'].apply(lambda x: greedy_tag_split(x, tags_df))
+    processed_tag_mapping = {i: j for i, j in tags_df[['tag', 'splitted_tags']].values}
+    artists_df['art_tags'] = artists_df['art_movement_raw_tags'].apply(lambda x: ','.join([processed_tag_mapping[i] for i in x]))
+
+    tags_df = (
+        pd.DataFrame(list(chain.from_iterable(artists_df['art_tags'].apply(lambda x: x.split(',')).values)), columns=['tag'])
+        .value_counts()
+        .reset_index(name='cnt')
+    )
+    # stop_words = set(stopwords.words('english')) 
+    # flat_list = list(
+    #     np.concatenate(
+    #         input_content_df['artist_movement']
+    #         .apply(lambda x: [i.replace('(', '').replace(')', '').lower() for i in x.split(' ') if len(i)>0])
+    #         .values
+    #     ).flat
+    # )
+    # flat_list = [i for i in flat_list if i not in stop_words]
+
+    # tags_df = (
+    #     pd.DataFrame(flat_list, columns=['tag'])
+    #     .value_counts()
+    #     .to_frame(name='cnt')
+    #     .query('cnt>1').reset_index()
+    # )
+    # tags_df.drop(tags_df[~tags_df['tag'].apply(lambda x: any(c.isalpha() for c in x))].index, inplace=True)
+    # tags_df.reset_index(inplace=True, drop=True)
 
     return tags_df
 

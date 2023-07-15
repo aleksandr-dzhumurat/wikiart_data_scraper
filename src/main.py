@@ -41,7 +41,7 @@ def scrape_galleriesnow(galleries_list):
         get_exhibitions(gallery_link, exhibitions_file_path)
         #
         galleries_file_path = artifact_path(f'{artifact_partition_name}_galleries.csv')
-        get_galleries(gallery_link, galleries_file_path, overwrite=True)
+        get_galleries(gallery_link, galleries_file_path, overwrite=False)
         #
         final_file_path = artifact_path(f'{artifact_partition_name}_exhibitions_db.csv')
         resulted_files.append(final_file_path)

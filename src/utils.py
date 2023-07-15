@@ -6,6 +6,9 @@ import logging
 import string
 from typing import List, Dict
 import shutil
+import hashlib
+from pathlib import Path
+
 
 import pandas as pd
 import requests
@@ -49,6 +52,26 @@ def init_nltk():
     nltk.download('stopwords', download_dir=nltk_data_dir)
     nltk.data.path.append(nltk_data_dir)
 
+def generate_files():
+    basepath = '/srv/src'
+    result = []
+    for fname in os.listdir(basepath):
+        path = os.path.join(basepath, fname)
+        if os.path.isdir(path):
+            # skip directories
+            continue
+        result.append(os.path.join(basepath, fname))
+    return result
+
+def files_version() -> bytes:
+    hash = hashlib.md5()
+    for fn in generate_files():
+        try:
+            hash.update(Path(fn).read_bytes())
+        except IsADirectoryError:
+            pass
+    return str(hash.hexdigest())[:8]
+
 def prepare_service_data():
     service_file_names = [
         'tags_db.csv',
@@ -56,10 +79,23 @@ def prepare_service_data():
         'exhibitions_db.csv'
     ]
     result_data_dir = artifact_path('service_data')
-    if not os.path.exists(result_data_dir):
-        os.makedirs(result_data_dir)
+    if os.path.exists(result_data_dir):
+        postfix = files_version()
+        os.rename(result_data_dir, result_data_dir.replace('service_data', f'{postfix}_service_data'))
+    os.makedirs(result_data_dir)
     for f in service_file_names:
         source_file = artifact_path(f)
         shutil.copyfile(source_file, os.path.join(result_data_dir, f))
         logger.info('Copied to %s', os.path.join(result_data_dir, f))
     logger.info('Data collected to %s', result_data_dir)
+
+def n_gram_split(input_str: str):
+  potential_tags = []
+  tokens = input_str.split(' ')
+  for window_size in range(1,4):
+    start = 0
+    while start + window_size < len(tokens) + 1:
+      potential_tag = ' '.join(tokens[start: start+window_size])
+      potential_tags.append(potential_tag)
+      start += 1
+  return potential_tags
