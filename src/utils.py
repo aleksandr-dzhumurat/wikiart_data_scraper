@@ -4,11 +4,11 @@ import os
 import time
 import logging
 import string
+import tarfile
 from typing import List, Dict
 import shutil
 import hashlib
 from pathlib import Path
-
 
 import pandas as pd
 import requests
@@ -37,6 +37,43 @@ def request_retries(url, num_retries: int = 3):
     return res
 
 config = load_config()
+
+import os
+import tarfile
+
+def extract_tar_gz(archive_path, output_directory):
+    """
+    # Example usage:
+    archive_path = "archive.tar.gz"
+    output_directory = "data"
+
+    extract_tar_gz(archive_path, output_directory)
+    """
+    if not os.path.exists(archive_path):
+        raise FileNotFoundError(f"Archive file '{archive_path}' not found.")
+
+    # Create the output directory if it doesn't exist
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+    # Extract the contents of the tar.gz archive
+    with tarfile.open(archive_path, "r:gz") as tar:
+        tar.extractall(output_directory)
+
+
+def create_tar_gz(directory_path, output_path):
+    # Check if the directory exists
+    if not os.path.exists(directory_path):
+        raise FileNotFoundError(f"Directory '{directory_path}' not found.")
+
+    with tarfile.open(output_path, 'w:gz') as archive:
+        # Walk through the directory and add files to the archive
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                # Archive only the files without their parent directory
+                archive.add(file_path, arcname=os.path.relpath(file_path, directory_path))
+
 
 def artifact_path(artifact_name: str):
     artifact_filename  = f"{config['data_version']}_{artifact_name}"
@@ -74,9 +111,9 @@ def files_version() -> bytes:
 
 def prepare_service_data():
     service_file_names = [
-        'tags_db.csv',
-        'content_db.csv',
-        'exhibitions_db.csv'
+        'tags_db.csv.gz',
+        'content_db.csv.gz',
+        'exhibitions_db.csv.gz'
     ]
     result_data_dir = artifact_path('service_data')
     if os.path.exists(result_data_dir):
@@ -88,6 +125,7 @@ def prepare_service_data():
         shutil.copyfile(source_file, os.path.join(result_data_dir, f))
         logger.info('Copied to %s', os.path.join(result_data_dir, f))
     logger.info('Data collected to %s', result_data_dir)
+    create_tar_gz(result_data_dir, f'{result_data_dir}.tar.gz'.replace(f"{config['data_version']}_", ''))
 
 def n_gram_split(input_str: str):
   potential_tags = []

@@ -313,6 +313,7 @@ def compute_tags(artists_df) -> pd.DataFrame:
         .value_counts()
         .reset_index(name='cnt')
     )
+    tags_df = tags_df[tags_df['tag'].apply(len) > 1]
     # stop_words = set(stopwords.words('english')) 
     # flat_list = list(
     #     np.concatenate(
@@ -334,7 +335,12 @@ def compute_tags(artists_df) -> pd.DataFrame:
 
     return tags_df
 
-def merge_data(input_csv_path: str, input_artists_info_csv_path: str, output_csv_path: str, output_tags_csv_path: str):
+def merge_data(
+    input_csv_path: str,
+    input_artists_info_csv_path: str,
+    output_csv_path: str,
+    output_tags_csv_path: str
+):
     init_nltk()
     res_df = pd.read_csv(input_csv_path)
     if 'ind' in res_df.columns:
@@ -353,11 +359,12 @@ def merge_data(input_csv_path: str, input_artists_info_csv_path: str, output_csv
     content_df['artist_field'] = content_df['field'].apply(process_field)
     content_df['artist_movement'] = content_df['art movement'].apply(process_art_movement)
     logger.info('Num rows %d', content_df.shape[0])
-    content_df.to_csv(output_csv_path, index=False)
     #
-    tags_df = compute_tags(content_df)
+    tags_df = compute_tags(content_df).query('cnt > 1')
     logger.info('Num tags %d', tags_df.shape[0])
-    tags_df.to_csv(output_tags_csv_path, index=False)
+    tags_df.to_csv(output_tags_csv_path, index=False, compression="gzip")
+    #
+    content_df.to_csv(output_csv_path, index=False, compression="gzip")
 
 def prepare_service_data(service_data_path: str):
     pass

@@ -143,4 +143,4 @@ def merge_exhibitions_data(artifact_partition_name, exhibitions_data_path: str, 
 def collapse_data(input_files: list, output_file_path: str):
   res_df = pd.concat([pd.read_csv(f_name) for f_name in input_files])
   logger.info('Num rows total: %d', res_df.shape[0])
-  res_df.to_csv(output_file_path, index=False)
+  res_df.to_csv(output_file_path, index=False, compression='gzip')

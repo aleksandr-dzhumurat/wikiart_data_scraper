@@ -28,8 +28,8 @@ def scrape_wikidata():
     merge_wikiart_data(
         artifact_path('artists_artworks.csv'),
         artifact_path('artists_info.csv'),
-        artifact_path('content_db.csv'),
-        artifact_path('tags_db.csv')
+        artifact_path('content_db.csv.gz'),
+        artifact_path('tags_db.csv.gz')
     )
 
 def scrape_galleriesnow(galleries_list):
@@ -46,7 +46,7 @@ def scrape_galleriesnow(galleries_list):
         final_file_path = artifact_path(f'{artifact_partition_name}_exhibitions_db.csv')
         resulted_files.append(final_file_path)
         merge_exhibitions_data(artifact_partition_name, exhibitions_file_path, galleries_file_path, final_file_path)
-    collapse_data(resulted_files, artifact_path('exhibitions_db.csv'))
+    collapse_data(resulted_files, artifact_path('exhibitions_db.csv.gz'))
     print('Galleries collected')
 
 parser = argparse.ArgumentParser()
@@ -58,5 +58,5 @@ if __name__ == '__main__':
         scrape_wikidata()
     elif args.pipeline == 'galleries':
         scrape_galleriesnow(config['galleries_pages'])
-    prepare_service_data()
-
+    elif args.pipeline == 'deploy':
+        prepare_service_data()
