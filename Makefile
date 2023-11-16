@@ -11,7 +11,10 @@ build:
 build-jupyter:
 	docker build -f Dockerfile.jupyter -t ${PROJECT_NAME}:jupyter .
 
-run: build-network
+code-version:
+	git log --oneline --format=%h -n1 > ${CURRENT_DIR}/src/code_vesrion.txt
+
+run: build-network code-version
 	docker run -it --rm \
 	    --env-file ${CURRENT_DIR}/.env \
 	    -v "${CURRENT_DIR}/src:/srv/src" \

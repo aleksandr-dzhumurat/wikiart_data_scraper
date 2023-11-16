@@ -10,6 +10,9 @@ case "$1" in
   galleries)
     python3 src/main.py --pipeline galleries
     ;;
+  deploy)
+    python3 src/main.py --pipeline deploy
+    ;;
   *)
     exec "$@"
 esac
