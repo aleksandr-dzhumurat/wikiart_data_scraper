@@ -1,7 +1,6 @@
 import argparse
 
 from utils import (
-    logger,
     config,
     artifact_path,
     prepare_service_data

@@ -1,5 +1,5 @@
 root_data_dir: /srv/data
-data_version: '03'
+data_version: '06'
 galleries_pages:
   - https://www.galleriesnow.net/exhibitions/london
   - https://www.galleriesnow.net/exhibitions/berlin
