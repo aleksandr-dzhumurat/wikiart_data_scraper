@@ -1,6 +1,12 @@
 CURRENT_DIR = $(shell pwd)
-PROJECT_NAME = artinder
-PORT_JUPYTER = 8889
+include .env
+export
+
+prepare-dirs:
+	mkdir -p data || true && \
+	mkdir -p data/artists_raw_html || true && \
+	mkdir -p data/artworks_raw_html || true && \
+	mkdir -p data/nltk_dir || true
 
 build-network:
 	docker network create service_network -d bridge || true
@@ -14,7 +20,7 @@ build-jupyter:
 code-version:
 	git log --oneline --format=%h -n1 > ${CURRENT_DIR}/src/code_vesrion.txt
 
-run: build-network code-version
+run: build-network code-version prepare-dirs
 	docker run -it --rm \
 	    --env-file ${CURRENT_DIR}/.env \
 	    -v "${CURRENT_DIR}/src:/srv/src" \
@@ -22,7 +28,15 @@ run: build-network code-version
 		--network service_network \
 	    ${PROJECT_NAME}:dev ${PIPELINE}
 
-jupyter: build-network
+build-search-index: build-network code-version prepare-dirs
+	docker run -it --rm \
+	    --env-file ${CURRENT_DIR}/.env \
+	    -v "${CURRENT_DIR}/src:/srv/src" \
+	    -v "${CURRENT_DIR}/data:/srv/data" \
+		--network service_network \
+	    ${PROJECT_NAME}:dev "python3" src/prepare_search_index.py
+
+run-jupyter: build-network
 	docker run -d --rm \
 	    --env-file ${CURRENT_DIR}/.env \
 	    -p ${PORT_JUPYTER}:8888 \

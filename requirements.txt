@@ -4,3 +4,5 @@ pandas
 bs4
 PyYAML
 nltk==3.6.2
+scikit-learn
+joblib

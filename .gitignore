@@ -161,3 +161,4 @@ cython_debug/
 
 data/
 src/code_vesrion.txt
+.env

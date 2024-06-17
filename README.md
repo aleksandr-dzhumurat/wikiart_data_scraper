@@ -1,11 +1,24 @@
 # wikiart_data_scraper
 
+Build docker
+```shell
+make build
+```
+
 Scrape wikiart.org. Get artists + content
 
 Run craper for wikiart.org
 
 ```shell
 PIPELINE=wikidata make run
+```
+
+```shell
+make build-search-index
+```
+
+```shell
+make build-jupyter && make jupyter
 ```
 
 # Scrape galleries
