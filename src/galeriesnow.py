@@ -75,6 +75,9 @@ def get_exhibitions(url: str, output_csv_path: str) -> pd.DataFrame:
                     open_hours = t.find(name='div', class_='d-block')
                     if open_hours is not None:
                         cur_exhibition.update({'open hours':  open_hours.text.strip()})
+                    time_period = t.find(name='div', class_='col-md-12').find('span')
+                    if time_period is not None:
+                        cur_exhibition.update({'time_period':  time_period.text})
                     res.append(cur_exhibition)
                     cnt += 1
                     if cnt % batch_size == 0:
