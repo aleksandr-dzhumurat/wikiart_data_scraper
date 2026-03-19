@@ -6,3 +6,4 @@ PyYAML
 nltk==3.6.2
 scikit-learn
 joblib
+tqdm

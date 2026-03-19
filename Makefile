@@ -1,4 +1,5 @@
 CURRENT_DIR = $(shell pwd)
+PROJECT_NAME = art_scraper
 include .env
 export
 
@@ -6,6 +7,7 @@ prepare-dirs:
 	mkdir -p data || true && \
 	mkdir -p data/artists_raw_html || true && \
 	mkdir -p data/artworks_raw_html || true && \
+	mkdir -p data/art_links || true && \
 	mkdir -p data/nltk_dir || true
 
 build-network:
@@ -19,6 +21,11 @@ build-jupyter:
 
 code-version:
 	git log --oneline --format=%h -n1 > ${CURRENT_DIR}/src/code_vesrion.txt
+
+run-dev:
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	python3 ${CURRENT_DIR}/src/main.py --pipeline wikidata
 
 run: build-network code-version prepare-dirs
 	docker run -it --rm \
@@ -70,3 +77,8 @@ stop-jupyter:
 
 stop-mongo:
 	docker rm -f ${PROJECT_NAME}_mongo
+
+analysis:
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	python3 ${CURRENT_DIR}/src/main.py --pipeline analysis

@@ -1,13 +1,19 @@
-import os
 import json
-import requests
+import multiprocessing
+import os
 import time
-from typing import List, Dict
+from typing import Dict, List, Tuple
 
 import pandas as pd
+import requests
 from bs4 import BeautifulSoup
 
-from utils import logger, init_nltk, n_gram_split
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None
+
+from utils import init_nltk, logger, n_gram_split
 
 
 def prepare_pages_list() -> List[str]:
@@ -37,7 +43,12 @@ def request_retries(url, num_retries: int = 3):
 
 def get_html(url, html_dir_name=''):
     html_dir = os.path.join(os.environ['ROOT_DATA_DIR'], html_dir_name)
-    html_file_name = url.split('/')[-1].split('.')[0]
+    os.makedirs(html_dir, exist_ok=True)
+    path_parts = [part for part in url.split('/') if part]
+    # WikiArt URLs are usually /en/<artist-slug>/... ; use artist slug to keep cache files unique per artist.
+    artist_slug = path_parts[3] if len(path_parts) > 3 and path_parts[2] == 'en' else ''
+    page_slug = path_parts[-1].split('.')[0]
+    html_file_name = f"{artist_slug}_{page_slug}" if artist_slug else page_slug
     html_path = os.path.join(html_dir, f"{html_file_name}.html")
     if os.path.exists(html_path):
         with open(html_path, 'r', encoding='utf-8') as file:
@@ -128,6 +139,7 @@ def get_artists_info(input_csv_path: str, output_csv_path: str, output_wikitext_
         logger.info('Artists information (wiki, etc) scraping started: %d rows', input_df.shape[0])
         for ind, row in input_df.iterrows():
             artist_page_url = os.path.join('https://www.wikiart.org', row['artist_link'][1:])
+            logger.info('[%d/%d] Fetching artist: %s', cnt + 1, input_df.shape[0], row['artist_name'])
             artist_info_page = get_html(artist_page_url, 'artists_raw_html')
             artist_dict = {
                 'ind': ind, 'artist_name': row['artist_name'], 'artist_url': artist_page_url,
@@ -141,12 +153,15 @@ def get_artists_info(input_csv_path: str, output_csv_path: str, output_wikitext_
                 artist_info = extract_artists_info(artist_info_scraper)
                 artist_dict.update(artist_info)
                 artist_dict.update({'request_result_success': True})
+                logger.info('[%d/%d] OK: %s', cnt + 1, input_df.shape[0], row['artist_name'])
+            else:
+                logger.warning('[%d/%d] FAILED (no page): %s', cnt + 1, input_df.shape[0], row['artist_name'])
             wiki_descriptions.append((ind, row['artist_name'], wiki_text))
             artists_info.append(artist_dict)
             # time.sleep(0.25)
             cnt += 1
-            if cnt % 500 == 0:
-                logger.info('Num artists %d of %d', cnt, input_df.shape[0])
+            if cnt % 100 == 0:
+                logger.info('Progress: %d of %d artists processed', cnt, input_df.shape[0])
         # saving data to artists_info.csv
         artists_info_df = pd.json_normalize(artists_info)
         artists_info_df['artist_field'] = artists_info_df['field'].apply(process_field)
@@ -181,6 +196,301 @@ def get_artwork_by_url(url) -> str:
     res = artwork_block.find('img')['src']
     return res
 
+
+def extract_artwork_description(filename: str) -> Dict:
+    root_data_dir = os.environ.get('ROOT_DATA_DIR', 'data')
+    filepath = os.path.join(root_data_dir, 'artworks_raw_html', filename)
+
+    with open(filepath, 'r', encoding='utf-8') as file:
+        artwork_page = file.read()
+
+    artwork_scraper = BeautifulSoup(markup=artwork_page, features="html.parser")
+    artwork_info = artwork_scraper.find(name='div', class_='wiki-layout-artist-info wiki-layout-artwork-info')
+
+    if artwork_info is None:
+        raise ValueError(f'Could not find artwork info block in {filepath}')
+
+    title = ''
+    artist = ''
+
+    title_node = artwork_info.find(name='h1')
+    if title_node is not None:
+        title = title_node.get_text(strip=True)
+
+    artist_node = artwork_info.find(name='h2')
+    if artist_node is not None:
+        artist_link = artist_node.find(name='a')
+        artist = artist_link.get_text(strip=True) if artist_link else artist_node.get_text(strip=True)
+
+    details = artwork_info.find(name='article')
+
+    def extract_detail_value(label: str) -> str:
+        if details is None:
+            return ''
+        for li in details.find_all(name='li'):
+            label_node = li.find(name='s')
+            if label_node is None:
+                continue
+            normalized_label = label_node.get_text(strip=True).lower().rstrip(':')
+            if normalized_label != label.lower().rstrip(':'):
+                continue
+            li_copy = BeautifulSoup(str(li), features="html.parser")
+            for tag in li_copy.find_all(name='s'):
+                tag.extract()
+            return li_copy.get_text(' ', strip=True)
+        return ''
+
+    date = extract_detail_value('date').replace('c. ', 'c.')
+    style = extract_detail_value('style')
+    genre = extract_detail_value('genre')
+    location_text = extract_detail_value('location')
+
+    venue = ''
+    city = ''
+    country = ''
+    if location_text:
+        location_parts = [part.strip() for part in location_text.split(',') if part.strip()]
+        if len(location_parts) > 0:
+            venue = location_parts[0]
+        if len(location_parts) > 1:
+            city = location_parts[1]
+        if len(location_parts) > 2:
+            country = ', '.join(location_parts[2:])
+
+    image = ''
+    image_node = artwork_info.find(name='img', attrs={'itemprop': 'image'})
+    if image_node is not None:
+        image = image_node.get('src', '')
+
+    images = []
+    variants_container = artwork_info.find(name='ul', class_='image-variants-container')
+    if variants_container is not None:
+        for a_tag in variants_container.find_all(name='a', attrs={'data-image-url': True}):
+            url = a_tag['data-image-url'].strip()
+            if url:
+                images.append(url)
+
+    return {
+        'title': title,
+        'artist': artist,
+        'date': date,
+        'style': style,
+        'genre': genre,
+        'location': {
+            'venue': venue,
+            'city': city,
+            'country': country,
+        },
+        'image': image,
+        'images': images,
+    }
+
+
+def _process_artwork_file(args: Tuple[str, str]) -> Tuple[str, str]:
+    """Worker function for multiprocessing. Returns (status, filename).
+    status is one of: 'processed', 'skipped', 'failed'
+    """
+    html_filename, output_json_dir = args
+    json_filename = f"{os.path.splitext(html_filename)[0]}.json"
+    json_filepath = os.path.join(output_json_dir, json_filename)
+
+    if os.path.exists(json_filepath):
+        return ('skipped', html_filename)
+
+    try:
+        artwork_description = extract_artwork_description(html_filename)
+        with open(json_filepath, 'w', encoding='utf-8') as file:
+            json.dump(artwork_description, file, ensure_ascii=False, indent=4)
+        return ('processed', html_filename)
+    except Exception as e:
+        logger.warning('Failed to extract artwork description from %s: %s', html_filename, e)
+        return ('failed', html_filename)
+
+
+def extract_artworks_descriptions(
+    raw_html_dir_name: str = 'artworks_raw_html',
+    output_json_dir_name: str = 'artworks_json',
+    num_workers: int = 2,
+):
+    root_data_dir = os.environ.get('ROOT_DATA_DIR', 'data')
+    raw_html_dir = os.path.join(root_data_dir, raw_html_dir_name)
+    output_json_dir = os.path.join(root_data_dir, output_json_dir_name)
+
+    os.makedirs(output_json_dir, exist_ok=True)
+
+    if not os.path.exists(raw_html_dir):
+        logger.warning('Raw artworks html directory does not exist: %s', raw_html_dir)
+        return
+
+    html_files = sorted([
+        filename for filename in os.listdir(raw_html_dir)
+        if filename.endswith('.html')
+    ])
+
+    logger.info('Artwork description extraction started. Num html files: %d, workers: %d', len(html_files), num_workers)
+
+    processed_cnt = 0
+    skipped_cnt = 0
+    failed_cnt = 0
+
+    worker_args = [(filename, output_json_dir) for filename in html_files]
+
+    with multiprocessing.Pool(processes=num_workers) as pool:
+        results = pool.imap_unordered(_process_artwork_file, worker_args)
+
+        if tqdm is not None:
+            results = tqdm(results, total=len(html_files), desc='Processing artworks_raw_html', unit='file')
+
+        for status, _ in results:
+            if status == 'processed':
+                processed_cnt += 1
+            elif status == 'skipped':
+                skipped_cnt += 1
+            else:
+                failed_cnt += 1
+
+            if tqdm is not None:
+                results.set_postfix(processed=processed_cnt, skipped=skipped_cnt, failed=failed_cnt)
+
+    logger.info(
+        'Artwork description extraction finished. processed=%d skipped=%d failed=%d output_dir=%s',
+        processed_cnt,
+        skipped_cnt,
+        failed_cnt,
+        output_json_dir,
+    )
+
+
+def build_artworks_json_descriptive_stats(
+    json_dir_name: str = 'artworks_json',
+    stats_output_name: str = 'artworks_json_descriptive_stats.json'
+):
+    root_data_dir = os.environ.get('ROOT_DATA_DIR', 'data')
+    json_dir = os.path.join(root_data_dir, json_dir_name)
+    stats_output_path = os.path.join(root_data_dir, stats_output_name)
+
+    if not os.path.exists(json_dir):
+        logger.warning('Artwork json directory does not exist: %s', json_dir)
+        return
+
+    json_files = sorted([
+        filename for filename in os.listdir(json_dir)
+        if filename.endswith('.json')
+    ])
+
+    total_files = len(json_files)
+    if total_files == 0:
+        stats = {
+            'total_json_files': 0,
+            'json_with_any_empty_description': 0,
+            'share_json_with_any_empty_description': 0.0,
+            'json_with_empty_location': 0,
+            'share_json_with_empty_location': 0.0,
+            'empty_field_counts': {
+                'title': 0,
+                'artist': 0,
+                'date': 0,
+                'style': 0,
+                'genre': 0,
+                'location_venue': 0,
+                'location_city': 0,
+                'location_country': 0,
+            },
+            'invalid_json_files': 0,
+            'genre': {},
+            'style': {},
+        }
+        with open(stats_output_path, 'w', encoding='utf-8') as file:
+            json.dump(stats, file, ensure_ascii=False, indent=4)
+        logger.info('No artwork json files found. Stats saved to %s', stats_output_path)
+        return
+
+    empty_field_counts = {
+        'title': 0,
+        'artist': 0,
+        'date': 0,
+        'style': 0,
+        'genre': 0,
+        'location_venue': 0,
+        'location_city': 0,
+        'location_country': 0,
+    }
+
+    any_empty_description_cnt = 0
+    empty_location_cnt = 0
+    invalid_json_files = 0
+    genre_counts: Dict[str, int] = {}
+    style_counts: Dict[str, int] = {}
+
+    for filename in json_files:
+        filepath = os.path.join(json_dir, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as file:
+                item = json.load(file)
+        except Exception as e:
+            invalid_json_files += 1
+            logger.warning('Invalid json file %s: %s', filepath, e)
+            continue
+
+        title = (item.get('title') or '').strip()
+        artist = (item.get('artist') or '').strip()
+        date = (item.get('date') or '').strip()
+        style = (item.get('style') or '').strip()
+        genre = (item.get('genre') or '').strip()
+        location = item.get('location') if isinstance(item.get('location'), dict) else {}
+        location_venue = (location.get('venue') or '').strip()
+        location_city = (location.get('city') or '').strip()
+        location_country = (location.get('country') or '').strip()
+
+        field_to_value = {
+            'title': title,
+            'artist': artist,
+            'date': date,
+            'style': style,
+            'genre': genre,
+            'location_venue': location_venue,
+            'location_city': location_city,
+            'location_country': location_country,
+        }
+
+        has_any_empty = False
+        for field_name, value in field_to_value.items():
+            if not value:
+                empty_field_counts[field_name] += 1
+                has_any_empty = True
+
+        if has_any_empty:
+            any_empty_description_cnt += 1
+
+        if not location_venue and not location_city and not location_country:
+            empty_location_cnt += 1
+
+        if genre:
+            genre_counts[genre] = genre_counts.get(genre, 0) + 1
+        if style:
+            style_counts[style] = style_counts.get(style, 0) + 1
+
+    top_genres = dict(sorted(genre_counts.items(), key=lambda x: x[1], reverse=True)[:20])
+    top_styles = dict(sorted(style_counts.items(), key=lambda x: x[1], reverse=True)[:20])
+
+    denominator = max(1, total_files)
+    stats = {
+        'total_json_files': total_files,
+        'json_with_any_empty_description': any_empty_description_cnt,
+        'share_json_with_any_empty_description': round(any_empty_description_cnt / denominator, 6),
+        'json_with_empty_location': empty_location_cnt,
+        'share_json_with_empty_location': round(empty_location_cnt / denominator, 6),
+        'empty_field_counts': empty_field_counts,
+        'invalid_json_files': invalid_json_files,
+        'genre': top_genres,
+        'style': top_styles,
+    }
+
+    with open(stats_output_path, 'w', encoding='utf-8') as file:
+        json.dump(stats, file, ensure_ascii=False, indent=4)
+
+    logger.info('Artwork json descriptive stats saved to %s', stats_output_path)
+
 def get_artworks_links(artworks_url: str, limit: int = 10):
     # artworks_page = request_retries(artworks_url).content
     artworks_page = get_html(artworks_url, 'art_links')
@@ -207,28 +517,48 @@ def get_artworks_links(artworks_url: str, limit: int = 10):
                         exception_occured = True
     return artworks_array
 
-def save_batch(batch_data: List, final_csv_path: str, batches_dir_name: str, batch_num: int, batch_size: int):
-    batch_file_name = (
-        final_csv_path
-        .replace('.csv', f'_{batch_num * batch_size}_{batch_num * batch_size + batch_size}.csv')
-        .split('/')[-1]
-    )
+
+def write_jsonl(records: List[Dict], output_path: str):
+    with open(output_path, 'w', encoding='utf-8') as file:
+        for record in records:
+            file.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+
+def read_jsonl(input_path: str) -> List[Dict]:
+    result = []
+    with open(input_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            result.append(json.loads(line))
+    return result
+
+def save_batch(batch_data: List[Dict], final_output_path: str, batches_dir_name: str, batch_num: int, batch_size: int):
+    output_base_name, output_ext = os.path.splitext(os.path.basename(final_output_path))
+    batch_file_name = f'{output_base_name}_{batch_num * batch_size}_{batch_num * batch_size + batch_size}{output_ext}'
     batch_file_name = os.path.join(batches_dir_name, batch_file_name)
-    (
-        pd
-        .DataFrame(batch_data, columns=['ind', 'artist_name', 'artworks_url', 'artworks'])
-        .to_csv(batch_file_name, index=False)
-    )
+    write_jsonl(batch_data, batch_file_name)
     logger.info('Saved to %s', batch_file_name)
 
 def collect_batches(batches_dir_name: str,  overwrite: bool = False):
     logger.info('Collecting batches from %s', batches_dir_name)
-    res = pd.DataFrame([], columns=['ind', 'artist_name', 'artworks_url', 'artworks'])
+    res = pd.DataFrame([], columns=['ind', 'artist_name', 'artworks'])
     try: 
         batch_files = os.listdir(batches_dir_name)
         # batches from previous runs
         for batch_file in batch_files:
-            res = pd.concat([res, pd.read_csv(os.path.join(batches_dir_name, batch_file))])
+            batch_path = os.path.join(batches_dir_name, batch_file)
+            if batch_file.endswith('.jsonl'):
+                res = pd.concat([res, pd.DataFrame(read_jsonl(batch_path))], ignore_index=True)
+            elif batch_file.endswith('.csv'):
+                # Backward compatibility with old batch format.
+                old_batch = pd.read_csv(batch_path)
+                old_batch = old_batch[['ind', 'artist_name', 'artworks']]
+                old_batch['artworks'] = old_batch['artworks'].apply(
+                    lambda x: json.loads(x) if isinstance(x, str) and x.strip().startswith('[') else []
+                )
+                res = pd.concat([res, old_batch], ignore_index=True)
         if res.shape[0] > 0 and overwrite:
             for batch_file in batch_files:
                 logger.info('removing %s', batch_file)
@@ -238,22 +568,26 @@ def collect_batches(batches_dir_name: str,  overwrite: bool = False):
         os.makedirs(batches_dir_name)
     return res
 
-def get_photo_urls(input_csv_path, output_csv_path, batches_dir_name, batch_size: int = 30):
+def get_photo_urls(input_csv_path, output_jsonl_path, batches_dir_name, batch_size: int = 30):
     page_postfix = 'all-works/text-list'
     batches_df = collect_batches(batches_dir_name)
     if batches_df.shape[0] > 0:
         logger.info('Removing files...')
         min_id, max_id = batches_df['ind'].min(), batches_df['ind'].max()
-        result_f_name = output_csv_path.replace('.csv', f'_{min_id}_{max_id}.csv').split('/')[-1]
+        output_name, output_ext = os.path.splitext(output_jsonl_path)
+        result_f_name = f"{os.path.basename(output_name)}_{min_id}_{max_id}{output_ext}"
         batch_files = os.listdir(batches_dir_name)
         for batch_file in batch_files:
             logger.info('removing %s', batch_file)
             os.remove(os.path.join(batches_dir_name, batch_file))
         logger.info('Saving to %s', os.path.join(batches_dir_name, result_f_name))
-        batches_df.sort_values(by='ind').to_csv(os.path.join(batches_dir_name, result_f_name), index=False)
+        write_jsonl(
+            batches_df.sort_values(by='ind')[['ind', 'artist_name', 'artworks']].to_dict(orient='records'),
+            os.path.join(batches_dir_name, result_f_name)
+        )
     collected_ids = [int(i) for i in batches_df['ind'].values]
     logger.info('Artwork url retrieval started. Num already collected artists: %d', len(collected_ids))
-    if not os.path.exists(output_csv_path):
+    if not os.path.exists(output_jsonl_path):
         artworks = []
         cnt = 0
         batch_num = 0
@@ -266,15 +600,20 @@ def get_photo_urls(input_csv_path, output_csv_path, batches_dir_name, batch_size
             logger.info('scraping %d: %s...', ind, row['artist_link'])
             result_url = os.path.join(os.path.join('https://www.wikiart.org', row['artist_link'][1:]), page_postfix)
             artworks_links = get_artworks_links(result_url)
-            artworks.append((ind, row['artist_name'], result_url, json.dumps(artworks_links)))
+            artworks.append({'ind': int(ind), 'artist_name': row['artist_name'], 'artworks': artworks_links})
             if cnt % batch_size == 0:
-                save_batch(artworks, output_csv_path, batches_dir_name, batch_num, batch_size)
+                save_batch(artworks, output_jsonl_path, batches_dir_name, batch_num, batch_size)
                 batch_num += 1
                 logger.info('Num processed links %d', cnt)
                 artworks = []
+        if artworks:
+            save_batch(artworks, output_jsonl_path, batches_dir_name, batch_num, batch_size)
         final_df = collect_batches(batches_dir_name)
         logger.info('Total num rows %d', final_df.shape[0])
-        final_df.sort_values(by='ind').to_csv(output_csv_path, index=False)
+        write_jsonl(
+            final_df.sort_values(by='ind')[['ind', 'artist_name', 'artworks']].to_dict(orient='records'),
+            output_jsonl_path
+        )
     logger.info('Artworks data saved')
 
 def process_art_movement(raw_str):
@@ -311,7 +650,6 @@ def greedy_tag_split(raw_tag_description: str, tags_df: pd.DataFrame) -> str:
 
 def compute_tags(artists_df) -> pd.DataFrame:
     from itertools import chain
-    from nltk.corpus import stopwords
 
     def process_art_movement(raw_str: str):
         return [i.strip() for i in raw_str.split(',') if len(i.strip().lower()) > 0]
@@ -362,13 +700,13 @@ def compute_tags(artists_df) -> pd.DataFrame:
     return tags_df
 
 def merge_data(
-    input_csv_path: str,
+    input_jsonl_path: str,
     input_artists_info_csv_path: str,
     output_csv_path: str,
     output_tags_csv_path: str
 ):
     init_nltk()
-    res_df = pd.read_csv(input_csv_path)
+    res_df = pd.DataFrame(read_jsonl(input_jsonl_path))
     if 'ind' in res_df.columns:
         assert (res_df['ind'].values.size == res_df['ind'].unique().size)
         res_df.set_index('ind', inplace=True)

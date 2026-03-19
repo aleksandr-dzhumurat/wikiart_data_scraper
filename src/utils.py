@@ -1,8 +1,8 @@
-import os
-import logging
-import tarfile
-import shutil
 import hashlib
+import logging
+import os
+import shutil
+import tarfile
 from pathlib import Path
 
 import yaml
@@ -11,7 +11,8 @@ logger = logging.getLogger('my_logger')
 logging.basicConfig(format='%(asctime)s: %(message)s', level=logging.INFO)
 
 def load_config() -> dict:
-    config_path = os.getenv("CONFIG_PATH", "config.yml")
+    default_config_path = os.path.join(os.path.dirname(__file__), "config.yml")
+    config_path = os.getenv("CONFIG_PATH", default_config_path)
     with open(config_path, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     return config
@@ -55,17 +56,18 @@ def create_tar_gz(directory_path, output_path):
 
 
 def artifact_path(artifact_name: str):
-    artifact_filename  = f"{config['data_version']}_{artifact_name}"
-    return os.path.join(config['root_data_dir'], artifact_filename)
+    root_data_dir = os.getenv("ROOT_DATA_DIR", config['root_data_dir'])
+    os.makedirs(root_data_dir, exist_ok=True)
+    artifact_filename = f"{config['data_version']}_{artifact_name}"
+    return os.path.join(root_data_dir, artifact_filename)
 
 def init_nltk():
     import nltk
-    
-    config['root_data_dir']
-    nltk_data_dir = os.path.join('/srv/data', 'nltk_data')
-    if not os.path.exists(nltk_data_dir):
-        os.makedirs(nltk_data_dir)
-    logger.info('NLTK dir %s created', nltk_data_dir)
+
+    root_data_dir = os.getenv("ROOT_DATA_DIR", config['root_data_dir'])
+    nltk_data_dir = os.path.join(root_data_dir, 'nltk_data')
+    os.makedirs(nltk_data_dir, exist_ok=True)
+    logger.info('NLTK dir %s ready', nltk_data_dir)
     nltk.download('stopwords', download_dir=nltk_data_dir)
     nltk.data.path.append(nltk_data_dir)
 

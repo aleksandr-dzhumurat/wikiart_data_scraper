@@ -1,35 +1,38 @@
 import argparse
 
-from utils import (
-    config,
-    artifact_path,
-    prepare_service_data
-)
-from wikiart import (
-    get_artists_pages,
-    get_artists_info,
-    get_photo_urls,
-    merge_data as merge_wikiart_data,
-)
 from galeriesnow import (
+    collapse_data,
     get_exhibitions,
     get_galleries,
     merge_exhibitions_data,
-    collapse_data
 )
+from utils import artifact_path, config, prepare_service_data
+from wikiart import (
+    build_artworks_json_descriptive_stats,
+    extract_artworks_descriptions,
+    get_artists_info,
+    get_artists_pages,
+    get_photo_urls,
+)
+from wikiart import (
+    merge_data as merge_wikiart_data,
+)
+
 
 def scrape_wikidata():
     csv_path = artifact_path('artists_pages.csv')
     get_artists_pages(csv_path)
     # TODO: refactor get_artists_info, using parallel batch processing
     get_artists_info(csv_path, artifact_path('artists_info.csv'), artifact_path('artists_wiki_texts.csv'))
-    get_photo_urls(csv_path, artifact_path('artists_artworks.csv'), artifact_path('data_batches'))
+    get_photo_urls(csv_path, artifact_path('artists_artworks.jsonl'), artifact_path('data_batches'))
     merge_wikiart_data(
-        artifact_path('artists_artworks.csv'),
+        artifact_path('artists_artworks.jsonl'),
         artifact_path('artists_info.csv'),
         artifact_path('content_db.csv.gz'),
         artifact_path('tags_db.csv.gz')
     )
+    extract_artworks_descriptions()
+    build_artworks_json_descriptive_stats()
 
 def scrape_galleriesnow(galleries_list):
     resulted_files = []
@@ -59,3 +62,5 @@ if __name__ == '__main__':
         scrape_galleriesnow(config['galleries_pages'])
     elif args.pipeline == 'deploy':
         prepare_service_data()
+    elif args.pipeline == 'analysis':
+        build_artworks_json_descriptive_stats()
