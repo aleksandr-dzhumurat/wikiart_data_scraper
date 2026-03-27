@@ -1,0 +1,7 @@
+transformers>=4.40.0
+datasets>=2.19.0
+Pillow>=10.0.0
+evaluate>=0.4.0
+scikit-learn>=1.4.0
+accelerate>=0.29.0
+hf-transfer>=0.1.4

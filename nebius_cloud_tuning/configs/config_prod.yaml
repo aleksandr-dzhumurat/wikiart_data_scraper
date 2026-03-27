@@ -1,0 +1,31 @@
+# Dataset
+# for HF dataset
+dataset_name: "aleksandr-dzhumurat/art-genre-classification-slim"
+# for custom dataset uploaded via `make upload-dataset-s3`
+# dataset_name: "/workspace/data/hf_dataset"
+dataset_split_train: "train"
+dataset_split_val: "validation"
+dataset_split_test: "test"
+image_column: "image"
+label_column: "label"
+
+# Model
+model_name: "google/vit-base-patch16-224"   # pretrained ViT-B/16
+
+# Training
+output_dir: "/workspace/data/output"
+num_train_epochs: 20                        # 5→20: more passes for better convergence
+per_device_train_batch_size: 64             # 32→64: L40S has 48GB VRAM, use it
+per_device_eval_batch_size: 128             # doubled to match train batch
+learning_rate: 2.0e-5
+weight_decay: 0.05                          # 0.01→0.05: standard ViT regularization
+warmup_ratio: 0.1
+lr_scheduler_type: "cosine"
+fp16: true                                  # GPU mixed precision
+dataloader_num_workers: 7                   # 4→7: use available vCPUs (8 vCPU preset)
+save_strategy: "epoch"
+eval_strategy: "epoch"
+load_best_model_at_end: true
+metric_for_best_model: "accuracy"
+save_total_limit: 2                          # keep only 2 best checkpoints
+save_only_model: true                        # drop optimizer/scheduler state (~655 MB/ckpt)

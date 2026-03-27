@@ -1,0 +1,26 @@
+# Dataset
+dataset_name: "aleksandr-dzhumurat/art-genre-classification-slim"
+dataset_split_train: "train"
+dataset_split_val: "validation"
+dataset_split_test: "test"
+image_column: "image"
+label_column: "label"
+
+# Model
+model_name: "google/vit-base-patch16-224"   # pretrained ViT-B/16
+
+# Training
+output_dir: "/workspace/data/output"
+num_train_epochs: 5
+per_device_train_batch_size: 32
+per_device_eval_batch_size: 64
+learning_rate: 2.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.1
+lr_scheduler_type: "cosine"
+fp16: true                                  # GPU mixed precision
+dataloader_num_workers: 4
+save_strategy: "epoch"
+eval_strategy: "epoch"
+load_best_model_at_end: true
+metric_for_best_model: "accuracy"

@@ -1,0 +1,13 @@
+# Dataset
+dataset_name: "data/hf_dataset"
+dataset_split_train: "train"
+dataset_split_val: "validation"
+dataset_split_test: "test"
+image_column: "image"
+label_column: "label"
+
+# Model
+model_name: "google/vit-base-patch16-224"
+
+# Local paths (downloaded via make download_model)
+output_dir: "nebius_cloud_tuning/output"
