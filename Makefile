@@ -17,24 +17,48 @@ build-network:
 build:
 	docker build -t ${PROJECT_NAME}:dev .
 
-build-jupyter:
-	docker build -f Dockerfile.jupyter -t ${PROJECT_NAME}:jupyter .
-
 code-version:
 	git log --oneline --format=%h -n1 > ${CURRENT_DIR}/src/code_vesrion.txt
 
 run-dev:
-	CONFIG_PATH=${CURRENT_DIR}/src/config.yml PYTHONPATH=${CURRENT_DIR}/src \
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
 	ROOT_DATA_DIR=${CURRENT_DIR}/data \
-	python3 ${CURRENT_DIR}/src/main.py --pipeline wikidata
+	python ${CURRENT_DIR}/src/main.py --pipeline wikidata
 
-run: build-network code-version prepare-dirs
-	docker run -it --rm \
-	    --env-file ${CURRENT_DIR}/.env \
-	    -v "${CURRENT_DIR}/src:/srv/src" \
-	    -v "${CURRENT_DIR}/data:/srv/data" \
-		--network service_network \
-	    ${PROJECT_NAME}:dev ${PIPELINE}
+run-api:
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	APP_LABEL=${PROJECT_NAME}_api \
+	uvicorn content_api:app --host 0.0.0.0 --port 8090
+
+stop-api:
+	@pkill -f "APP_LABEL=${PROJECT_NAME}_api" && echo "API stopped" || echo "API not running"
+
+attach:
+	tail -f /tmp/${PROJECT_NAME}_api.log
+
+run: stop-api
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	APP_LABEL=${PROJECT_NAME}_api \
+	nohup uvicorn content_api:app --host 0.0.0.0 --port 8090 > /tmp/${PROJECT_NAME}_api.log 2>&1 &
+	@echo "API started (log: /tmp/${PROJECT_NAME}_api.log)"
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	streamlit run ${CURRENT_DIR}/src/streamlit_app.py --server.port 8501
+
+run-app:
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	streamlit run ${CURRENT_DIR}/src/streamlit_app.py --server.port 8501
+
+
+run-debug:
 
 build-search-index: build-network code-version prepare-dirs
 	docker run -it --rm \
@@ -44,37 +68,22 @@ build-search-index: build-network code-version prepare-dirs
 		--network service_network \
 	    ${PROJECT_NAME}:dev "python3" src/prepare_search_index.py
 
-run-jupyter: build-network
-	docker run -d --rm \
-	    --env-file ${CURRENT_DIR}/.env \
-	    -p ${PORT_JUPYTER}:8888 \
-	    -v "${CURRENT_DIR}/src:/srv/src" \
-	    -v "${CURRENT_DIR}/data:/srv/data" \
-		--network service_network \
-	    --name ${PROJECT_NAME}_jupyter_container \
-	    ${PROJECT_NAME}:jupyter
+run-jupyter:
+	ROOT_DATA_DIR=${CURRENT_DIR}/data \
+	PYTHONPATH=${CURRENT_DIR}/src \
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	ENV_PATH=${CURRENT_DIR}/.env \
+	RUN_ENV=LOCAL \
+	jupyter notebook src/jupyter_notebooks --ip 0.0.0.0 --port 8899 --NotebookApp.token='' --NotebookApp.password='' --allow-root --no-browser 
 
-run-debug:
-	docker run -it --rm \
-	    --env-file ${CURRENT_DIR}/.env \
-	    -v "${CURRENT_DIR}/src:/srv/src" \
-	    -v "${CURRENT_DIR}/data:/srv/data" \
-	    --name ${PROJECT_NAME}_container \
-	    ${PROJECT_NAME}:dev bash
 
-mongo: build-network
-	docker run -d \
-		-v "${CURRENT_DIR}/data/mongo_data:/data/db"\
-		-p 27018:27017 \
-	    --name ${PROJECT_NAME}_mongo \
-		--network service_network \
-		mongo:6.0.5
-
-stop:
-	docker rm -f techcrunch_scraper
-
-stop-jupyter:
-	docker rm -f ${PROJECT_NAME}_jupyter_container
+# mongo: build-network
+# 	docker run -d \
+# 		-v "${CURRENT_DIR}/data/mongo_data:/data/db"\
+# 		-p 27018:27017 \
+# 	    --name ${PROJECT_NAME}_mongo \
+# 		--network service_network \
+# 		mongo:6.0.5
 
 stop-mongo:
 	docker rm -f ${PROJECT_NAME}_mongo
@@ -84,6 +93,8 @@ run-inference:
 	python3 ${CURRENT_DIR}/nebius_cloud_tuning/inference.py
 
 prepare-images:
+	CONFIG_PATH=${CURRENT_DIR}/src/config.yml \
+	PYTHONPATH=${CURRENT_DIR}/src \
 	ROOT_DATA_DIR=${CURRENT_DIR}/data \
 	python3 ${CURRENT_DIR}/src/prepare_images.py
 

@@ -147,12 +147,23 @@ make analysis
 
 ---
 
-## `make run` — Scrape wikiart.org (Docker)
+## `make run` — Start API + Streamlit app
 
-Runs the wikidata pipeline inside Docker. Requires `PROJECT_NAME` set and Docker running.
+Stops any running API, starts the FastAPI backend (detached), then launches the Streamlit UI in the foreground.
 
 ```shell
-PIPELINE=wikidata make run
+make run
+```
+
+- API: `http://localhost:8090` (log: `/tmp/art_scraper_api.log`)
+- Streamlit: `http://localhost:8501`
+
+To manage the API separately:
+
+```shell
+make run-api    # start API in foreground
+make stop-api   # stop detached API process
+make run-app    # start Streamlit in foreground
 ```
 
 ---
@@ -161,9 +172,7 @@ PIPELINE=wikidata make run
 
 ```shell
 make build-search-index   # build search index inside Docker
-make build-jupyter        # build Jupyter image
 make run-jupyter          # start Jupyter notebook server
-make mongo                # start MongoDB container
 ```
 
 ---
@@ -189,3 +198,46 @@ Refactor code with [multiprocessing](https://www.zenrows.com/blog/speed-up-web-s
 New data source: Artsy. Selenium needed =/
 
 [italy](https://www.artsy.net/galleries?location=milan-italy) - automatically tap show_more
+
+# Recommendation algorithm
+
+TF-IDF based content recommendations. Artist tags (movement + field) are vectorized with `TfidfVectorizer`, splitting on `|` delimiter. Movement tags receive a 3× boost via repetition to weight them higher than field tags. Recommendations use cosine similarity between user preference vector and artist corpus.
+
+---
+
+## Image Classification (Fine-tuning)
+
+Multi-class art genre classification using a fine-tuned Vision Transformer (`google/vit-base-patch16-224`).
+
+| | |
+|---|---|
+| **Classes** | Impressionism, Surrealism, Minimalism, Pop Art |
+| **Dataset** | 4 × 400 images (80/10/10 train/val/test split) |
+| **Hardware** | 1× L40S GPU (48 GB VRAM), Nebius AI Jobs |
+| **Best val accuracy** | 76% |
+
+### Data pipeline
+
+```
+make run-dev          # scrape wikiart → data/artworks_json/*.json
+make prepare-images   # download images → data/dataset/<style>/
+                      # prepare splits → data/hf_dataset/{train,validation,test}/<style>/
+make upload-dataset-s3  # upload to S3 object storage
+```
+
+### Training
+
+```bash
+make upload-job-files   # upload scripts + config to S3
+make deploy             # launch Nebius AI job (1×L40S)
+make download_model     # download best model + metrics
+```
+
+### Local inference
+
+```bash
+make predict            # run inference with local config
+```
+
+See [nebius_cloud_tuning/README.md](nebius_cloud_tuning/README.md) for full details.
+

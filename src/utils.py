@@ -1,10 +1,13 @@
 import hashlib
+import json
 import logging
 import os
 import shutil
 import tarfile
+import time
 from pathlib import Path
 
+import requests
 import yaml
 
 logger = logging.getLogger('my_logger')
@@ -15,6 +18,10 @@ def load_config() -> dict:
     config_path = os.getenv("CONFIG_PATH", default_config_path)
     with open(config_path, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
+    config['root_data_dir'] = os.getenv("ROOT_DATA_DIR", config['root_data_dir'])
+    os.makedirs(config['root_data_dir'], exist_ok=True)
+    config['data_version_dir'] = os.path.join(config['root_data_dir'], config['data_version'])
+    os.makedirs(config['data_version_dir'], exist_ok=True)
     return config
 
 
@@ -56,10 +63,7 @@ def create_tar_gz(directory_path, output_path):
 
 
 def artifact_path(artifact_name: str):
-    root_data_dir = os.getenv("ROOT_DATA_DIR", config['root_data_dir'])
-    os.makedirs(root_data_dir, exist_ok=True)
-    artifact_filename = f"{config['data_version']}_{artifact_name}"
-    return os.path.join(root_data_dir, artifact_filename)
+    return os.path.join(config['data_version_dir'], artifact_name)
 
 def init_nltk():
     import nltk
@@ -108,6 +112,54 @@ def prepare_service_data():
         logger.info('Copied to %s', os.path.join(result_data_dir, f))
     logger.info('Data collected to %s', result_data_dir)
     create_tar_gz(result_data_dir, f'{result_data_dir}.tar.gz'.replace(f"{config['data_version']}_", ''))
+
+def write_jsonl(records: list[dict], output_path: str):
+    with open(output_path, 'w', encoding='utf-8') as file:
+        file.writelines(json.dumps(record, ensure_ascii=False) + '\n' for record in records)
+
+def read_jsonl(input_path: str) -> list[dict]:
+    result = []
+    with open(input_path, 'r', encoding='utf-8') as file:
+        for line in file:
+            line = line.strip()
+            if not line:
+                continue
+            result.append(json.loads(line))
+    return result
+
+def request_retries(url, num_retries: int = 3):
+    # TODO: use 'backoff' module  instead of this
+    res = None
+    for _ in range(num_retries):
+        try:
+            res = requests.get(url)
+            if res.status_code == 200:
+                return res
+            else:
+                print("Failed to retrieve webpage %s. Status code: %s" % (url, res.status_code))
+        except requests.exceptions.ConnectionError as e:
+            logger.error('Failed to retrieve webpage %s\n%s', url, e)
+            time.sleep(0.25)
+    return res
+
+def get_html(url, html_dir_name='', root_data_dir = config['data_version_dir']):
+    html_dir = os.path.join(root_data_dir, html_dir_name)
+    os.makedirs(html_dir, exist_ok=True)
+    path_parts = [part for part in url.split('/') if part]
+    # WikiArt URLs are usually /en/<artist-slug>/... ; use artist slug to keep cache files unique per artist.
+    artist_slug = path_parts[3] if len(path_parts) > 3 and path_parts[2] == 'en' else ''
+    page_slug = path_parts[-1].split('.')[0]
+    html_file_name = f"{artist_slug}_{page_slug}" if artist_slug else page_slug
+    html_path = os.path.join(html_dir, f"{html_file_name}.html")
+    if os.path.exists(html_path):
+        with open(html_path, 'r', encoding='utf-8') as file:
+            html_content = file.read()
+    else:
+        html_content = request_retries(url)
+        html_content = html_content.text  # `.content` ?
+        with open(html_path, 'w', encoding='utf-8') as file:
+            file.write(html_content)
+    return html_content
 
 def n_gram_split(input_str: str):
   potential_tags = []

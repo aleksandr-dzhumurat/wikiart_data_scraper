@@ -1,3 +1,28 @@
+"""Download artwork images and prepare HuggingFace dataset.
+
+Prerequisites:
+    artworks_index.jsonl and artworks_json_descriptive_stats.json must exist
+    in the data version directory (e.g. data/07/).
+
+    artworks_index.jsonl is produced by the scraping pipeline (make run-dev).
+    It contains artwork URLs and local HTML paths used to extract image links.
+
+Usage:
+    # Download images to data/dataset/<style>/:
+    make prepare-images
+
+    # Download images and upload to HuggingFace:
+    make prepare-images ARGS="--upload"
+
+    # Or run directly:
+    CONFIG_PATH=src/config.yml PYTHONPATH=src ROOT_DATA_DIR=data \\
+        python src/prepare_images.py
+
+    # With upload:
+    CONFIG_PATH=src/config.yml PYTHONPATH=src ROOT_DATA_DIR=data \\
+        HF_DATASET_REPO=your-org/your-dataset \\
+        python src/prepare_images.py --upload
+"""
 import argparse
 import json
 import os
@@ -12,11 +37,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 
-ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data"))
-STATS_FILE = os.path.join(ROOT_DATA_DIR, "artworks_json_descriptive_stats.json")
-ARTWORKS_DIR = os.path.join(ROOT_DATA_DIR, "artworks_json")
-DATASET_DIR = os.path.join(ROOT_DATA_DIR, "dataset")
-HF_DATASET_DIR = os.path.join(ROOT_DATA_DIR, "hf_dataset")
+from utils import artifact_path, config, logger
+
+DATASET_DIR = os.path.join(config['root_data_dir'], 'dataset')
+HF_DATASET_DIR = os.path.join(config['root_data_dir'], 'hf_dataset')
 
 HF_WHITELIST = [
     "Impressionism",
@@ -49,7 +73,8 @@ def get_session() -> requests.Session:
 
 
 def load_styles() -> dict:
-    with open(STATS_FILE) as f:
+    stats_path = artifact_path('artworks_json_descriptive_stats.json')
+    with open(stats_path) as f:
         return json.load(f)["style"]
 
 
@@ -61,8 +86,9 @@ def extract_filename(image_url: str) -> str:
 
 def collect_tasks(styles: dict) -> list[tuple[str, str]]:
     """Return (url, dest_path) pairs for images that still need downloading."""
+    artworks_dir = artifact_path('artworks_json')
     tasks = []
-    for entry in Path(ARTWORKS_DIR).glob("*.json"):
+    for entry in Path(artworks_dir).glob("*.json"):
         try:
             data = json.loads(entry.read_text())
         except json.JSONDecodeError:
@@ -101,14 +127,14 @@ def run_download():
     os.makedirs(DATASET_DIR, exist_ok=True)
 
     styles = load_styles()
-    print(f"Loaded {len(styles)} styles")
+    logger.info('Loaded %d styles', len(styles))
 
-    print("Scanning artworks JSON files...")
+    logger.info('Scanning artworks JSON files...')
     tasks = collect_tasks(styles)
-    print(f"Found {len(tasks)} images to download")
+    logger.info('Found %d images to download', len(tasks))
 
     if not tasks:
-        print("Nothing to download.")
+        logger.info('Nothing to download.')
         return
 
     ok = err = 0
@@ -125,12 +151,11 @@ def run_download():
                 bar.set_postfix(ok=ok, err=err)
                 bar.update(1)
 
-    print(f"\nDone: {ok} downloaded, {err} failed.")
+    logger.info('Done: %d downloaded, %d failed.', ok, err)
 
 
 TRAIN_RATIO = 0.8
 VAL_RATIO = 0.1
-# TEST_RATIO = 0.1 (remainder)
 SPLIT_SEED = 42
 
 
@@ -144,10 +169,10 @@ def prepare_hf_dataset():
         src_dir = dataset_dir / style
         train_dst = hf_dir / "train" / style
         if train_dst.exists():
-            print(f"Skip {style}: already exists in hf_dataset/train")
+            logger.info('Skip %s: already exists in hf_dataset/train', style)
             continue
         if not src_dir.is_dir():
-            print(f"Skip {style}: not found in dataset")
+            logger.info('Skip %s: not found in dataset', style)
             continue
 
         files = [p for p in src_dir.iterdir() if p.suffix.lower() in image_exts]
@@ -168,9 +193,10 @@ def prepare_hf_dataset():
             for src_file in split_files:
                 shutil.copy2(src_file, dst / src_file.name)
 
-        print(f"{style}: train={len(splits['train'])} val={len(splits['validation'])} test={len(splits['test'])}")
+        logger.info('%s: train=%d val=%d test=%d', style,
+                     len(splits['train']), len(splits['validation']), len(splits['test']))
 
-    print("prepare_hf_dataset done.")
+    logger.info('prepare_hf_dataset done.')
 
 
 def run_upload():
@@ -203,15 +229,15 @@ def run_upload():
         ),
     )
     card.push_to_hub(repo_id=HF_DATASET_REPO, repo_type="dataset")
-    print("Dataset card pushed.")
+    logger.info('Dataset card pushed.')
 
-    print(f"Uploading {HF_DATASET_DIR} -> {HF_DATASET_REPO} ...")
+    logger.info('Uploading %s -> %s ...', HF_DATASET_DIR, HF_DATASET_REPO)
     api.upload_large_folder(
         repo_id=HF_DATASET_REPO,
         repo_type="dataset",
         folder_path=HF_DATASET_DIR,
     )
-    print("Upload complete.")
+    logger.info('Upload complete.')
 
 
 if __name__ == "__main__":
@@ -219,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--upload",
         action="store_true",
-        help="Upload dataset/  to HuggingFace Hub after downloading",
+        help="Upload dataset/ to HuggingFace Hub after downloading",
     )
     args = parser.parse_args()
 
